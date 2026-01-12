@@ -33,6 +33,9 @@ const badgeStyle: React.CSSProperties = {
 export default function ChatPage() {
   const STORAGE_KEY = "gaduGator.sessionPrefs";
 
+  const THEME_KEY = "gadugator.theme.v1";
+const [dark, setDark] = useState(false);
+
   const [sessionPrefs, setSessionPrefs] = useState<any>(null);
   const [isSetupOpen, setIsSetupOpen] = useState(false);
 
@@ -49,6 +52,21 @@ export default function ChatPage() {
       setIsSetupOpen(true);
     }
   }, []);
+
+useEffect(() => {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === "dark") setDark(true);
+    if (saved === "light") setDark(false);
+  } catch {}
+}, []);
+
+useEffect(() => {
+  try {
+    localStorage.setItem(THEME_KEY, dark ? "dark" : "light");
+  } catch {}
+}, [dark]);
+
 
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -217,7 +235,13 @@ export default function ChatPage() {
           }
 
           const text = String(data?.text ?? "").trim();
-          if (text) setInput((prev) => (prev ? prev + " " : "") + text);
+
+if (text) {
+  setInput((prev) => (prev ? prev + " " : "") + text);
+} else {
+  setSttError("Nie udało się rozpoznać mowy — spróbuj powiedzieć coś dłużej.");
+}
+
         } catch (e: any) {
           setSttError(
             typeof e?.message === "string" && e.message.trim()
@@ -265,14 +289,27 @@ export default function ChatPage() {
     : "";
 
   return (
-    <>
-      <SessionSetupModal
-        isOpen={isSetupOpen}
-        onClose={() => setIsSetupOpen(false)}
-        onSave={(prefs: any) => setSessionPrefs(prefs)}
-      />
+  <div
+    style={{
+      minHeight: "100vh",
+      background: dark ? "#0b0b0f" : "#f6f6f6",
+    }}
+  >
+    <SessionSetupModal
+      isOpen={isSetupOpen}
+      onClose={() => setIsSetupOpen(false)}
+      onSave={(prefs: any) => setSessionPrefs(prefs)}
+    />
 
-      <div style={{ maxWidth: 760, margin: "0 auto", padding: 16 }}>
+      <div
+  style={{
+    maxWidth: 760,
+    margin: "0 auto",
+    padding: 16,
+    color: dark ? "#eee" : "#111",
+  }}
+>
+
         <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>
           GaduGator
         </h1>
@@ -313,17 +350,27 @@ export default function ChatPage() {
             >
               ⚙️
             </button>
+<button
+  type="button"
+  onClick={() => setDark((v) => !v)}
+  title="Motyw"
+  aria-label="Motyw"
+>
+  {dark ? "☀️" : "🌙"}
+</button>
+
+
           </div>
         </div>
 
         <div
           style={{
-            border: "1px solid #ddd",
+            border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
             borderRadius: 12,
             padding: 12,
             height: 420,
             overflow: "auto",
-            background: "#fff",
+            background: dark ? "#12121a" : "#fff",
           }}
         >
           {msgs.length === 0 ? (
@@ -340,10 +387,10 @@ export default function ChatPage() {
                       marginLeft: 12,
                       fontSize: 13,
                       opacity: 0.95,
-                      border: "1px solid #eee",
+                      border: dark ? "1px solid #2a2a38" : "1px solid #eee",
                       borderRadius: 10,
                       padding: "8px 10px",
-                      background: "#fafafa",
+                      background: dark ? "#161622" : "#fafafa",
                     }}
                   >
                     <button
@@ -416,11 +463,18 @@ export default function ChatPage() {
               flex: 1,
               padding: 10,
               borderRadius: 10,
-              border: "1px solid #ddd",
+              border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+background: dark ? "#12121a" : "#fff",
+color: dark ? "#eee" : "#111",
+
             }}
             onKeyDown={(e) => {
-              if (e.key === "Enter") send();
-            }}
+  if (e.key === "Enter") {
+    if (isRecording || isTranscribing) return;
+    send();
+  }
+}}
+
           />
 
           {/* 🎙️ Press & hold */}
@@ -444,6 +498,9 @@ export default function ChatPage() {
               cursor: loading || isTranscribing ? "not-allowed" : "pointer",
               userSelect: "none",
               WebkitUserSelect: "none",
+              boxShadow: isRecording ? "0 0 0 6px rgba(255, 0, 0, 0.12)" : "none",
+transition: "box-shadow 0.2s ease",
+
             }}
           >
             {isRecording ? "⏺️" : "🎙️"}
@@ -454,13 +511,15 @@ export default function ChatPage() {
           </button>
         </div>
 
-        {(isTranscribing || sttError) && (
-          <div style={{ marginTop: 8, fontSize: 13, opacity: 0.8 }}>
-            {isTranscribing ? "Transcribing..." : null}
-            {sttError ? ` STT error: ${sttError}` : null}
-          </div>
-        )}
+       {(isRecording || isTranscribing || sttError) && (
+  <div style={{ marginTop: 8, fontSize: 13, opacity: 0.8 }}>
+    {isRecording ? "Nagrywam... (puść przycisk, aby zakończyć)" : null}
+    {isTranscribing ? " Transcribing..." : null}
+    {sttError ? ` STT error: ${sttError}` : null}
+  </div>
+)}
+
       </div>
-    </>
+    </div>
   );
 }
