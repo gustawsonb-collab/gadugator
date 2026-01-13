@@ -179,6 +179,22 @@ function safeParseAssistantJSON(raw: string): { reply: string; feedback?: Feedba
     return null;
   }
 }
+function minimalFeedback(userText: string) {
+  const u = (userText ?? "").trim();
+
+  return {
+    corrected: "",
+    tips: [
+      "Tip: add one short follow-up question to keep the conversation going.",
+    ],
+    alternatives: u
+      ? [
+          `Alternative: "${u}"`,
+          "Alternative: try a shorter sentence + a follow-up question.",
+        ]
+      : [],
+  };
+}
 
 
 export async function POST(req: Request) {
@@ -242,7 +258,19 @@ export async function POST(req: Request) {
       });
     }
 
-    return NextResponse.json({ text: trimmed || "(empty reply)", feedback: null });
+  
+const lastUserText =
+  [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+
+const fbOut = minimalFeedback(lastUserText);
+
+console.log("CHAT RETURN:", { text: trimmed || "(empty reply)", fbOut });
+
+    return NextResponse.json({
+  text: trimmed || "(empty reply)",
+  feedback: fbOut,
+});
+
   } catch (err: any) {
     const status = Number(err?.status) || Number(err?.response?.status) || 500;
     const msg = String(err?.message ?? err);

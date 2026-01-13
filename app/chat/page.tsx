@@ -4,7 +4,9 @@ import React, { useEffect, useRef, useState } from "react";
 import SessionSetupModal from "../api/chat/components/SessionSetupModal";
 
 type Role = "user" | "assistant";
+
 type Msg = {
+  id?: string; // dodane: stabilny klucz dla Reacta (na start opcjonalne)
   role: Role;
   text: string;
   feedback?: {
@@ -14,6 +16,7 @@ type Msg = {
   } | null;
   feedbackOpen?: boolean;
 };
+
 
 type Mode = "coach" | "tutor" | "chitchat" | "work";
 type Level = "A2" | "B1" | "B2";
@@ -82,6 +85,12 @@ useEffect(() => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
 
+const bottomRef = useRef<HTMLDivElement | null>(null);
+
+useEffect(() => {
+  bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+}, [msgs.length]);
+
   // Wczytanie historii
   useEffect(() => {
     try {
@@ -125,7 +134,11 @@ useEffect(() => {
     const text = input.trim();
     if (!text || loading) return;
 
-    const nextMsgs: Msg[] = [...msgs, { role: "user", text }];
+    const nextMsgs: Msg[] = [
+  ...msgs,
+  { id: crypto.randomUUID(), role: "user", text },
+];
+
     setMsgs(nextMsgs);
     setInput("");
     setLoading(true);
@@ -155,20 +168,22 @@ useEffect(() => {
       const aiText = String(data?.text ?? "").trim();
       const fb = data?.feedback ?? null;
 
-      setMsgs([
-        ...nextMsgs,
-        {
-          role: "assistant",
-          text: aiText || "(pusta odpowiedź)",
-          feedback: fb,
-          feedbackOpen: !!(
-            fb &&
-            (fb.corrected ||
-              (fb.tips?.length ?? 0) > 0 ||
-              (fb.alternatives?.length ?? 0) > 0)
-          ),
-        },
-      ]);
+     setMsgs([
+  ...nextMsgs,
+  {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    text: aiText || "(pusta odpowiedź)",
+    feedback: fb,
+    feedbackOpen: !!(
+      fb &&
+      (fb.corrected ||
+        (fb.tips?.length ?? 0) > 0 ||
+        (fb.alternatives?.length ?? 0) > 0)
+    ),
+  },
+]);
+
 
       // TTS (opcjonalnie)
       if ("speechSynthesis" in window && aiText) {
@@ -374,10 +389,14 @@ if (text) {
           }}
         >
           {msgs.length === 0 ? (
-            <div style={{ opacity: 0.7 }}>Napisz wiadomość, aby zacząć.</div>
-          ) : (
-            msgs.map((m, i) => (
-              <div key={i} style={{ marginBottom: 10 }}>
+  <div style={{ opacity: 0.7 }}>Napisz wiadomość, aby zacząć.</div>
+) : (
+  <>
+    {msgs.map((m, i) => (
+      <div key={m.id ?? i} style={{ marginBottom: 10 }}>
+
+        ...
+
                 <b>{m.role === "user" ? "Ty" : "GaduGator"}:</b> {m.text}
 
                 {m.role === "assistant" && m.feedback && (
@@ -404,6 +423,8 @@ if (text) {
                           )
                         );
                       }}
+
+
                       style={{
                         fontWeight: 700,
                         marginBottom: 6,
@@ -443,8 +464,11 @@ if (text) {
                   </div>
                 )}
               </div>
-            ))
-          )}
+                ))}
+    <div ref={bottomRef} />
+  </>
+)}
+
         </div>
 
         <div
