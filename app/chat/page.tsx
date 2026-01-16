@@ -17,6 +17,7 @@ type Msg = {
   text: string;
   feedback: Feedback | null; // user: null
   feedbackOpen: boolean;
+  meta?: { kind?: "onboarding" };
 };
 
 type Mode = "coach" | "tutor" | "chitchat" | "work";
@@ -28,6 +29,12 @@ const CHAT_STORAGE_KEY_V1 = "gadugator.chat.v1";
 
 const SESSION_PREFS_KEY = "gaduGator.sessionPrefs";
 const THEME_KEY = "gadugator.theme.v1";
+const ONBOARDED_KEY = "gadugator.onboarded.v1";
+
+const FREE_DAILY_LIMIT = 15;
+const USAGE_KEY = "gadugator.usage.v1";
+const PREMIUM_KEY = "gadugator.premium.v1";
+
 
 const TTS_ENABLED_KEY = "gadugator.tts.enabled.v2";
 const TTS_VOICE_KEY = "gadugator.tts.voice.v2";
@@ -95,7 +102,8 @@ function normalizeFeedback(anyFb: any): Feedback | null {
 
   if (!fb || typeof fb !== "object") return null;
 
-  const corrected = typeof (fb as any).corrected === "string" ? (fb as any).corrected : "";
+  const corrected =
+    typeof (fb as any).corrected === "string" ? (fb as any).corrected : "";
   const tips = Array.isArray((fb as any).tips)
     ? (fb as any).tips.filter((t: any) => typeof t === "string")
     : [];
@@ -152,6 +160,103 @@ function readChatFromStorage(): any[] | null {
   return null;
 }
 
+function hasOnboarded(): boolean {
+  try {
+    return localStorage.getItem(ONBOARDED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setOnboarded(): void {
+  try {
+    localStorage.setItem(ONBOARDED_KEY, "1");
+  } catch {}
+}
+
+function buildOnboardingMessages(): Msg[] {
+  return [
+    {
+      id: safeUUID(),
+      role: "assistant",
+      text: "👋 Hi! I’m **GaduGator** 🐊\nI help you practice English naturally — by chatting, correcting mistakes, and speaking out loud.",
+      feedback: minimalFeedbackClient(""),
+      feedbackOpen: false,
+      meta: { kind: "onboarding" },
+    },
+    {
+      id: safeUUID(),
+      role: "assistant",
+      text: "You can:\n• ✍️ Write and get corrections\n• 🎤 Speak and I’ll understand you\n• 🔊 Listen to my answers (natural voice)",
+      feedback: minimalFeedbackClient(""),
+      feedbackOpen: false,
+      meta: { kind: "onboarding" },
+    },
+    {
+      id: safeUUID(),
+      role: "assistant",
+      text: "How would you like to start?",
+      feedback: minimalFeedbackClient(""),
+      feedbackOpen: false,
+      meta: { kind: "onboarding" },
+    },
+  ];
+}
+function todayKey(): string {
+  // prosty klucz dzienny w local time
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function isPremium(): boolean {
+  try {
+    return localStorage.getItem(PREMIUM_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function getUsage(): { day: string; count: number } {
+  try {
+    const raw = localStorage.getItem(USAGE_KEY);
+    if (!raw) return { day: todayKey(), count: 0 };
+    const parsed = JSON.parse(raw);
+    const day = typeof parsed?.day === "string" ? parsed.day : todayKey();
+    const count = typeof parsed?.count === "number" ? parsed.count : 0;
+    return { day, count };
+  } catch {
+    return { day: todayKey(), count: 0 };
+  }
+}
+
+function setUsage(u: { day: string; count: number }) {
+  try {
+    localStorage.setItem(USAGE_KEY, JSON.stringify(u));
+  } catch {}
+}
+
+function getTodayCount(): number {
+  const u = getUsage();
+  const t = todayKey();
+  if (u.day !== t) {
+    const reset = { day: t, count: 0 };
+    setUsage(reset);
+    return 0;
+  }
+  return Math.max(0, u.count);
+}
+
+function incTodayCount(): number {
+  const t = todayKey();
+  const u = getUsage();
+  const next = u.day === t ? { day: t, count: (u.count ?? 0) + 1 } : { day: t, count: 1 };
+  setUsage(next);
+  return next.count;
+}
+
 export default function ChatPage() {
   const [dark, setDark] = useState(false);
 
@@ -168,6 +273,10 @@ export default function ChatPage() {
   const [mode, setMode] = useState<Mode>("tutor");
   const [level, setLevel] = useState<Level>("B1");
   const [loading, setLoading] = useState(false);
+  const [todayCount, setTodayCount] = useState(0);
+const [premium, setPremium] = useState(false);
+const [isPaywallOpen, setIsPaywallOpen] = useState(false);
+
 
   // STT state
   const [isRecording, setIsRecording] = useState(false);
@@ -184,6 +293,7 @@ export default function ChatPage() {
   const [ttsError, setTtsError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const ttsAbortRef = useRef<AbortController | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
 
   const sessionLabel = useMemo(() => {
     return sessionPrefs
@@ -238,6 +348,11 @@ export default function ChatPage() {
       if (v && (TTS_VOICES as string[]).includes(v)) setTtsVoice(v as TTSVoice);
     } catch {}
   }, []);
+  useEffect(() => {
+  setPremium(isPremium());
+  setTodayCount(getTodayCount());
+}, []);
+
 
   useEffect(() => {
     try {
@@ -260,11 +375,15 @@ export default function ChatPage() {
     try {
       const a = audioRef.current;
       if (a) {
+        a.onended = null;
+        a.onpause = null;
         a.pause();
         a.currentTime = 0;
         a.src = "";
       }
     } catch {}
+
+    setIsPlaying(false);
   }
 
   async function playTTS(text: string) {
@@ -274,6 +393,7 @@ export default function ChatPage() {
 
     setTtsError(null);
     stopVoice();
+    setIsPlaying(true);
 
     const ctrl = new AbortController();
     ttsAbortRef.current = ctrl;
@@ -299,9 +419,14 @@ export default function ChatPage() {
       audioRef.current = a;
 
       a.onended = () => {
+        setIsPlaying(false);
         try {
           URL.revokeObjectURL(url);
         } catch {}
+      };
+
+      a.onpause = () => {
+        setIsPlaying(false);
       };
 
       a.src = url;
@@ -309,9 +434,12 @@ export default function ChatPage() {
       await a.play();
     } catch (e: any) {
       if (String(e?.name) === "AbortError") return;
+      setIsPlaying(false);
       setTtsError(typeof e?.message === "string" ? e.message : "TTS error");
     } finally {
       ttsAbortRef.current = null;
+      // jeśli audio nadal gra, onended/onpause ustawi false; tu robimy safe-guard
+      // (nie wymuszamy false, żeby nie migało)
     }
   }
 
@@ -320,11 +448,21 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs.length]);
 
-  // ✅ Load chat history (normalize + rebuild feedback for assistant)
+  // ✅ Load chat history + onboarding (JEDEN useEffect — bez duplikatów)
   useEffect(() => {
     const parsed = readChatFromStorage();
-    if (!parsed) return;
 
+    // 1) Brak historii -> onboarding (tylko raz)
+    if (!parsed || parsed.length === 0) {
+      if (!hasOnboarded()) {
+        const onboarding = buildOnboardingMessages();
+        setMsgs(onboarding);
+        setOnboarded();
+      }
+      return;
+    }
+
+    // 2) Jest historia -> normalizacja i rebuild feedback
     const base = parsed
       .filter((x: any) => x && typeof x.text === "string")
       .map((x: any) => ({
@@ -333,11 +471,12 @@ export default function ChatPage() {
         text: String(x.text),
         feedback: x.feedback ?? null,
         feedbackOpen: typeof x.feedbackOpen === "boolean" ? x.feedbackOpen : true,
+        meta: x.meta && typeof x.meta === "object" ? x.meta : undefined,
       }));
 
     const rebuilt: Msg[] = base.map((x: any, idx: number) => {
       if (x.role === "user") {
-        return { id: x.id, role: "user", text: x.text, feedback: null, feedbackOpen: false };
+        return { id: x.id, role: "user", text: x.text, feedback: null, feedbackOpen: false, meta: x.meta };
       }
 
       let prevUserText = "";
@@ -349,7 +488,7 @@ export default function ChatPage() {
       }
 
       const fb = normalizeFeedback(x.feedback) ?? minimalFeedbackClient(prevUserText);
-      return { id: x.id, role: "assistant", text: x.text, feedback: fb, feedbackOpen: x.feedbackOpen };
+      return { id: x.id, role: "assistant", text: x.text, feedback: fb, feedbackOpen: x.feedbackOpen, meta: x.meta };
     });
 
     setMsgs(rebuilt);
@@ -371,6 +510,34 @@ export default function ChatPage() {
       localStorage.removeItem(CHAT_STORAGE_KEY_V1);
     } catch {}
   }
+  function activatePremiumTest() {
+  try {
+    localStorage.setItem(PREMIUM_KEY, "1");
+  } catch {}
+  setPremium(true);
+  setIsPaywallOpen(false);
+}
+
+function exportChatTxt() {
+  try {
+    const lines = msgs.map((m) => `${m.role === "user" ? "User" : "GaduGator"}: ${m.text}`);
+    const content = lines.join("\n\n");
+
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "gadugator-chat.txt";
+    a.click();
+
+    setTimeout(() => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {}
+    }, 1000);
+  } catch {}
+}
 
   function toggleFeedback(msgId: string) {
     setMsgs((prev) => prev.map((m) => (m.id === msgId ? { ...m, feedbackOpen: !m.feedbackOpen } : m)));
@@ -385,11 +552,34 @@ export default function ChatPage() {
     const userText = input.trim();
     if (!userText || loading || isRecording || isTranscribing) return;
 
+    // ✅ Free limit guard
+if (!premium) {
+  const count = getTodayCount();
+  if (count >= FREE_DAILY_LIMIT) {
+    setIsPaywallOpen(true);
+
+    const fb = minimalFeedbackClient(userText);
+    setMsgs((prev) => [
+      ...prev,
+      makeAssistantMsg(
+        `🔒 Free limit reached (${FREE_DAILY_LIMIT}/day). Upgrade to Premium to continue.`,
+        fb
+      ),
+    ]);
+    return;
+  }
+}
+
+
     setInput("");
     setLoading(true);
 
     const userMsg = makeUserMsg(userText);
     setMsgs((prev) => [...prev, userMsg]);
+if (!premium) {
+  const next = incTodayCount();
+  setTodayCount(next);
+}
 
     try {
       const snapshot = [...msgsRef.current, userMsg];
@@ -413,7 +603,7 @@ export default function ChatPage() {
 
       setMsgs((prev) => [...prev, makeAssistantMsg(aiText, fb)]);
 
-      // ✅ backend TTS: zawsze stabilnie, niezależnie od Edge
+      // AUTO-TTS: obecne zachowanie zostawiamy (czyta automatycznie)
       void playTTS(aiText);
     } catch (e: any) {
       const errText =
@@ -490,6 +680,10 @@ export default function ChatPage() {
     setIsRecording(false);
   }
 
+  // CTA dopóki user nie napisze pierwszej wiadomości
+  const hasAnyUserMsg = msgs.some((m) => m.role === "user");
+  const showOnboardingCta = !hasAnyUserMsg && msgs.length > 0;
+
   return (
     <div style={{ minHeight: "100vh", background: dark ? "#0b0b0f" : "#f6f6f6" }}>
       <SessionSetupModal
@@ -501,7 +695,18 @@ export default function ChatPage() {
         }}
       />
 
-      <div style={{ maxWidth: 760, margin: "0 auto", padding: 16, color: dark ? "#eee" : "#111" }}>
+     <div
+  style={{
+    maxWidth: 760,
+    margin: "0 auto",
+    padding: 16,
+    color: dark ? "#eee" : "#111",
+    display: "flex",
+    flexDirection: "column",
+    minHeight: "100svh", // lepsze na mobile niż 100vh
+  }}
+>
+
         <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>GaduGator ✅ PAGE-TSX-OK</div>
 
         <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>GaduGator</h1>
@@ -512,133 +717,248 @@ export default function ChatPage() {
           </label>
 
           <button onClick={clearChat} type="button">
-            Wyczyść
-          </button>
+  New chat
+</button>
 
-         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-  {sessionLabel ? <span style={{ fontSize: 13, opacity: 0.7 }}>{sessionLabel}</span> : null}
+<button onClick={exportChatTxt} type="button" disabled={msgs.length === 0}>
+  Export
+</button>
 
-  {/* ⚙️ ustawienia sesji */}
-  <button
-    type="button"
-    onClick={() => setIsSetupOpen(true)}
-    title="Ustawienia sesji"
-    aria-label="Ustawienia sesji"
-    style={{
-      padding: "6px 10px",
-      borderRadius: 10,
-      border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
-      background: dark ? "#12121a" : "#fff",
-      color: "inherit",
-      cursor: "pointer",
-      fontWeight: 700,
-    }}
-  >
-    ⚙️
-  </button>
 
-  {/* 🔊 / 🔇 */}
-  <button
-    type="button"
-    onClick={() => {
-      setTtsEnabled((v) => !v);
-      stopVoice();
-      setTtsError(null);
-    }}
-    title="Głos (czytanie)"
-    aria-label="Głos (czytanie)"
-    style={{
-      padding: "6px 10px",
-      borderRadius: 10,
-      border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
-      background: dark ? "#12121a" : "#fff",
-      color: "inherit",
-      cursor: "pointer",
-      fontWeight: 700,
-    }}
-  >
-    {ttsEnabled ? "🔊" : "🔇"}
-  </button>
 
-  {/* STOP (czytelny, zamiast czarnego kwadratu) */}
-  <button
-    type="button"
-    onClick={stopVoice}
-    title="Stop voice"
-    aria-label="Stop voice"
-    style={{
-      padding: "6px 10px",
-      borderRadius: 10,
-      border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
-      background: dark ? "#12121a" : "#fff",
-      color: "inherit",
-      fontWeight: 700,
-      cursor: "pointer",
-    }}
-  >
-    STOP
-  </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {sessionLabel ? <span style={{ fontSize: 13, opacity: 0.7 }}>{sessionLabel}</span> : null}
 
-  {/* wybór głosu */}
-  {ttsEnabled ? (
-    <select
-      value={ttsVoice}
-      onChange={(e) => setTtsVoice(e.target.value as TTSVoice)}
-      style={{
-        padding: "6px 8px",
-        borderRadius: 10,
-        border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
-        background: dark ? "#12121a" : "#fff",
-        color: "inherit",
-      }}
-      title="Voice"
-    >
-      {TTS_VOICES.map((v) => (
-        <option key={v} value={v}>
-          {v}
-        </option>
-      ))}
-    </select>
-  ) : null}
+            {/* ⚙️ ustawienia sesji */}
+            <button
+              type="button"
+              onClick={() => setIsSetupOpen(true)}
+              title="Ustawienia sesji"
+              aria-label="Ustawienia sesji"
+              style={{
+                padding: "6px 10px",
+                borderRadius: 10,
+                border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+                background: dark ? "#12121a" : "#fff",
+                color: "inherit",
+                cursor: "pointer",
+                fontWeight: 700,
+              }}
+            >
+              ⚙️
+            </button>
 
-  {/* motyw */}
-  <button
-    type="button"
-    onClick={() => setDark((v) => !v)}
-    title="Motyw"
-    aria-label="Motyw"
-    style={{
-      padding: "6px 10px",
-      borderRadius: 10,
-      border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
-      background: dark ? "#12121a" : "#fff",
-      color: "inherit",
-      cursor: "pointer",
-      fontWeight: 700,
-    }}
-  >
-    {dark ? "☀️" : "🌙"}
-  </button>
-</div>
+            {/* 🔊 / 🔇 */}
+            <button
+              type="button"
+              onClick={() => {
+                setTtsEnabled((v) => !v);
+                stopVoice();
+                setTtsError(null);
+              }}
+              title="Głos (czytanie)"
+              aria-label="Głos (czytanie)"
+              style={{
+                padding: "6px 10px",
+                borderRadius: 10,
+                border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+                background: dark ? "#12121a" : "#fff",
+                color: "inherit",
+                cursor: "pointer",
+                fontWeight: 700,
+              }}
+            >
+              {ttsEnabled ? "🔊" : "🔇"}
+            </button>
 
+            {/* PLAY/STOP (ten sam przycisk) */}
+            <button
+              type="button"
+              onClick={() => {
+                if (isPlaying) {
+                  stopVoice();
+                  return;
+                }
+                if (!ttsEnabled) return;
+                const lastAssistant = [...msgs].reverse().find((m) => m.role === "assistant");
+                if (!lastAssistant) return;
+                void playTTS(lastAssistant.text);
+              }}
+              title={isPlaying ? "Stop" : "Play last answer"}
+              aria-label={isPlaying ? "Stop" : "Play last answer"}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 10,
+                border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+                background: dark ? "#12121a" : "#fff",
+                color: "inherit",
+                fontWeight: 700,
+                cursor: "pointer",
+                opacity: ttsEnabled ? 1 : 0.5,
+              }}
+            >
+              {isPlaying ? "⏹ STOP" : "▶️ PLAY"}
+            </button>
+
+            {/* wybór głosu */}
+            {ttsEnabled ? (
+              <select
+                value={ttsVoice}
+                onChange={(e) => setTtsVoice(e.target.value as TTSVoice)}
+                style={{
+                  padding: "6px 8px",
+                  borderRadius: 10,
+                  border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+                  background: dark ? "#12121a" : "#fff",
+                  color: "inherit",
+                }}
+                title="Voice"
+              >
+                {TTS_VOICES.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+
+            {/* motyw */}
+            <button
+              type="button"
+              onClick={() => setDark((v) => !v)}
+              title="Motyw"
+              aria-label="Motyw"
+              style={{
+                padding: "6px 10px",
+                borderRadius: 10,
+                border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+                background: dark ? "#12121a" : "#fff",
+                color: "inherit",
+                cursor: "pointer",
+                fontWeight: 700,
+              }}
+            >
+              {dark ? "☀️" : "🌙"}
+            </button>
+          </div>
         </div>
 
         {ttsError ? (
-          <div style={{ marginBottom: 10, fontSize: 13, opacity: 0.9 }}>
-            ⚠️ Voice error: {ttsError}
-          </div>
+          <div style={{ marginBottom: 10, fontSize: 13, opacity: 0.9 }}>⚠️ Voice error: {ttsError}</div>
         ) : null}
-
-        <div
+        {isPaywallOpen ? (
+  <div
+    style={{
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0,0,0,0.55)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 16,
+      zIndex: 50,
+    }}
+    onClick={() => setIsPaywallOpen(false)}
+  >
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        width: "100%",
+        maxWidth: 520,
+        borderRadius: 16,
+        border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+        background: dark ? "#12121a" : "#fff",
+        color: "inherit",
+        padding: 16,
+        boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+        <div style={{ fontSize: 18, fontWeight: 800 }}>Upgrade to Premium</div>
+        <button
+          type="button"
+          onClick={() => setIsPaywallOpen(false)}
           style={{
-            border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+            border: "none",
+            background: "transparent",
+            color: "inherit",
+            fontSize: 18,
+            cursor: "pointer",
+            fontWeight: 800,
+          }}
+          aria-label="Close"
+          title="Close"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div style={{ marginTop: 10, opacity: 0.9, lineHeight: 1.45 }}>
+        <div style={{ marginBottom: 8 }}>
+          You’ve reached the free daily limit (<b>{FREE_DAILY_LIMIT}/day</b>).
+        </div>
+        <div style={{ marginBottom: 8 }}>Premium unlocks:</div>
+        <ul style={{ margin: 0, paddingLeft: 18, opacity: 0.95 }}>
+          <li>Unlimited messages</li>
+          <li>Full voice practice (TTS)</li>
+          <li>Priority improvements</li>
+        </ul>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          onClick={activatePremiumTest}
+          style={{
+            padding: "10px 12px",
             borderRadius: 12,
-            padding: 12,
-            height: 420,
-            overflow: "auto",
-            background: dark ? "#12121a" : "#fff",
+            border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+            background: dark ? "#1a1a28" : "#111",
+            color: dark ? "#fff" : "#fff",
+            fontWeight: 800,
+            cursor: "pointer",
           }}
         >
+          ⭐ Upgrade (test)
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setIsPaywallOpen(false)}
+          style={{
+            padding: "10px 12px",
+            borderRadius: 12,
+            border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+            background: dark ? "#12121a" : "#fff",
+            color: "inherit",
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          Not now 
+        </button>
+      </div>
+
+      <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
+        (Dev mode) This button simulates payment by setting <code>gadugator.premium.v1</code> in localStorage.
+      </div>
+    </div>
+  </div>
+) : null}
+
+
+        <div
+  style={{
+    border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+    borderRadius: 12,
+    padding: 12,
+    flex: 1,
+    minHeight: 0, // KLUCZ: pozwala flex-child się scrollować
+    overflow: "auto",
+    background: dark ? "#12121a" : "#fff",
+  }}
+>
+
           {msgs.length === 0 ? (
             <div style={{ opacity: 0.75, lineHeight: 1.5 }}>
               <div style={{ marginBottom: 8 }}>Kliknij mikrofon 🎙️ albo wpisz wiadomość, żeby zacząć.</div>
@@ -720,7 +1040,54 @@ export default function ChatPage() {
           )}
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
+        {showOnboardingCta ? (
+          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => {
+                void startRecording();
+              }}
+              style={{ padding: "8px 10px", borderRadius: 10, border: dark ? "1px solid #2a2a38" : "1px solid #ddd" }}
+            >
+              🎤 I want to speak
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setInput("I did mistake yesterday.");
+              }}
+              style={{ padding: "8px 10px", borderRadius: 10, border: dark ? "1px solid #2a2a38" : "1px solid #ddd" }}
+            >
+              ✍️ Correct my sentence
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setInput("Let’s talk about travel. Ask me questions and correct my mistakes.");
+              }}
+              style={{ padding: "8px 10px", borderRadius: 10, border: dark ? "1px solid #2a2a38" : "1px solid #ddd" }}
+            >
+              🎓 Practice conversation
+            </button>
+          </div>
+        ) : null}
+
+        <div
+  style={{
+    position: "sticky",
+    bottom: 0,
+    marginTop: 12,
+    paddingTop: 10,
+    paddingBottom: "calc(10px + env(safe-area-inset-bottom))",
+    background: dark ? "#0b0b0f" : "#f6f6f6",
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+  }}
+>
+
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
