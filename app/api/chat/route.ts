@@ -9,8 +9,8 @@ type Role = "system" | "user" | "assistant";
 /** Incoming OpenAI-style message */
 type IncomingMessage = { role: Role; content: string };
 
-/** Your app modes (keep compatible with existing frontend) */
-type Mode = "tutor" | "chat";
+/** Your app modes (keep compatible with existing frontend + future) */
+type Mode = "coach" | "tutor" | "chitchat" | "work" | "chat";
 
 /** CEFR levels used in the app */
 type Level = "A1" | "A2" | "B1" | "B2" | "C1";
@@ -23,11 +23,22 @@ type SessionPrefs = {
   motivationalMode?: boolean;
 };
 
-type Feedback = {
+export type Feedback = {
   corrected: string;
   tips: string[];
   alternatives: string[];
 };
+
+function minimalFeedback(userText: string): Feedback {
+  const u = (userText ?? "").trim();
+  return {
+    corrected: "",
+    tips: ["Tip: add one short follow-up question to keep the conversation going."],
+    alternatives: u
+      ? [`Alternative: "${u}"`, "Alternative: try a shorter sentence + a follow-up question."]
+      : [],
+  };
+}
 
 function safeTrim(x: unknown, fallback: string) {
   if (typeof x !== "string") return fallback;
@@ -49,7 +60,6 @@ function buildSystemPrompt(params: {
   const style = sessionPrefs?.style ?? "casual";
   const motivationalMode = !!sessionPrefs?.motivationalMode;
 
-  // Build prompt safely (no backticks issues)
   const base = [
     "You are GaduGator, an English conversation tutor.",
     "",
@@ -80,16 +90,15 @@ function buildSystemPrompt(params: {
     "}",
   ].join("\n");
 
-  // Keep mode instructions, but do NOT contradict JSON format.
   const modeInstruction =
-    modeFromBody === "tutor"
+    modeFromBody === "tutor" || modeFromBody === "coach"
       ? [
-          "MODE: tutor",
+          `MODE: ${modeFromBody}`,
           "Be patient and supportive.",
           "In feedback.tips, keep tips short (max 1 line each).",
         ].join("\n")
       : [
-          "MODE: chat",
+          `MODE: ${modeFromBody}`,
           "Focus on natural conversation while staying within the level and one-question-at-a-time rule.",
         ].join("\n");
 
@@ -113,64 +122,44 @@ function isIncomingMessage(x: any): x is IncomingMessage {
   );
 }
 
-function safeParseAssistantJSON(raw: string): { reply: string; feedback?: Feedback } | null {
-  try {
-    const trimmed = raw.trim();
+function normalizeFeedback(fb: any): Feedback | null {
+  if (!fb || typeof fb !== "object") return null;
 
-    // 1) Try direct parse first
+  const corrected = typeof fb.corrected === "string" ? fb.corrected : "";
+  const tips = Array.isArray(fb.tips) ? fb.tips.filter((t: any) => typeof t === "string") : [];
+  const alternatives = Array.isArray(fb.alternatives)
+    ? fb.alternatives.filter((t: any) => typeof t === "string")
+    : [];
+
+  return { corrected, tips, alternatives };
+}
+
+function safeParseAssistantJSON(raw: string): { reply: string; feedback?: Feedback | null } | null {
+  try {
+    const trimmed = String(raw ?? "").trim();
+
+    // 1) Try direct parse
     try {
       const direct = JSON.parse(trimmed);
-
       if (direct && typeof direct === "object") {
         const reply = typeof (direct as any).reply === "string" ? (direct as any).reply : "";
-        const fb = (direct as any).feedback;
-
-        let feedback: Feedback | undefined;
-
-        if (fb && typeof fb === "object") {
-          const corrected = typeof fb.corrected === "string" ? fb.corrected : "";
-          const tips = Array.isArray(fb.tips)
-            ? fb.tips.filter((t: any) => typeof t === "string")
-            : [];
-          const alternatives = Array.isArray(fb.alternatives)
-            ? fb.alternatives.filter((t: any) => typeof t === "string")
-            : [];
-
-          feedback = { corrected, tips, alternatives };
-        }
-
+        const feedback = normalizeFeedback((direct as any).feedback);
         return { reply, feedback };
       }
     } catch {
-      // ignore and try extract below
+      // ignore
     }
 
-    // 2) If model returned extra text + JSON, extract the JSON object
+    // 2) Extract JSON object from surrounding text
     const first = trimmed.indexOf("{");
     const last = trimmed.lastIndexOf("}");
     if (first >= 0 && last > first) {
       const maybeJson = trimmed.slice(first, last + 1);
       const parsed = JSON.parse(maybeJson);
-
       if (!parsed || typeof parsed !== "object") return null;
 
       const reply = typeof (parsed as any).reply === "string" ? (parsed as any).reply : "";
-      const fb = (parsed as any).feedback;
-
-      let feedback: Feedback | undefined;
-
-      if (fb && typeof fb === "object") {
-        const corrected = typeof fb.corrected === "string" ? fb.corrected : "";
-        const tips = Array.isArray(fb.tips)
-          ? fb.tips.filter((t: any) => typeof t === "string")
-          : [];
-        const alternatives = Array.isArray(fb.alternatives)
-          ? fb.alternatives.filter((t: any) => typeof t === "string")
-          : [];
-
-        feedback = { corrected, tips, alternatives };
-      }
-
+      const feedback = normalizeFeedback((parsed as any).feedback);
       return { reply, feedback };
     }
 
@@ -179,29 +168,10 @@ function safeParseAssistantJSON(raw: string): { reply: string; feedback?: Feedba
     return null;
   }
 }
-function minimalFeedback(userText: string) {
-  const u = (userText ?? "").trim();
-
-  return {
-    corrected: "",
-    tips: [
-      "Tip: add one short follow-up question to keep the conversation going.",
-    ],
-    alternatives: u
-      ? [
-          `Alternative: "${u}"`,
-          "Alternative: try a shorter sentence + a follow-up question.",
-        ]
-      : [],
-  };
-}
-
 
 export async function POST(req: Request) {
   try {
-    // Use your current env var name (GG_...), but also allow OPENAI_API_KEY as fallback.
     const apiKey = process.env.GG_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
-
     if (!apiKey) {
       return NextResponse.json(
         {
@@ -219,19 +189,16 @@ export async function POST(req: Request) {
     const messages = (body?.messages ?? []) as IncomingMessage[];
     const mode = (body?.mode ?? "tutor") as Mode;
     const level = (body?.level ?? "B1") as Level;
-
-    // sessionPrefs from the session modal
     const sessionPrefs = (body?.sessionPrefs ?? null) as SessionPrefs | null;
 
     if (!Array.isArray(messages)) {
-      return NextResponse.json(
-        { error: "Invalid request: messages must be an array" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid request: messages must be an array" }, { status: 400 });
     }
 
-    // Filter/validate message entries to avoid runtime errors
     const cleanedMessages = messages.filter(isIncomingMessage);
+
+    const lastUserText =
+      [...cleanedMessages].reverse().find((m) => m.role === "user")?.content ?? "";
 
     const system = buildSystemPrompt({
       levelFromBody: level,
@@ -248,29 +215,18 @@ export async function POST(req: Request) {
     const raw = result.choices?.[0]?.message?.content ?? "";
     const trimmed = String(raw).trim();
 
-    // Try to parse JSON (mini-feedback). If it fails, fall back to plain text.
+    // Parse JSON from model; guarantee feedback in ALL success paths.
     const parsed = safeParseAssistantJSON(trimmed);
 
-    if (parsed && parsed.reply) {
-      return NextResponse.json({
-        text: parsed.reply.trim() || "(empty reply)",
-        feedback: parsed.feedback ?? null,
-      });
-    }
+    const textOut =
+      (parsed?.reply && String(parsed.reply).trim()) ? String(parsed.reply).trim() : (trimmed || "(empty reply)");
 
-  
-const lastUserText =
-  [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    const feedbackOut =
+      (parsed?.feedback && (parsed.feedback.corrected || parsed.feedback.tips?.length || parsed.feedback.alternatives?.length))
+        ? parsed.feedback
+        : minimalFeedback(lastUserText);
 
-const fbOut = minimalFeedback(lastUserText);
-
-console.log("CHAT RETURN:", { text: trimmed || "(empty reply)", fbOut });
-
-    return NextResponse.json({
-  text: trimmed || "(empty reply)",
-  feedback: fbOut,
-});
-
+    return NextResponse.json({ text: textOut, feedback: feedbackOut });
   } catch (err: any) {
     const status = Number(err?.status) || Number(err?.response?.status) || 500;
     const msg = String(err?.message ?? err);
