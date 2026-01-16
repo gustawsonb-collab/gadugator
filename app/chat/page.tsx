@@ -552,10 +552,14 @@ function exportChatTxt() {
     const userText = input.trim();
     if (!userText || loading || isRecording || isTranscribing) return;
 
-    // ✅ Free limit guard
-if (!premium) {
-  const count = getTodayCount();
-  if (count >= FREE_DAILY_LIMIT) {
+    // ✅ Free limit guard (kuloodporny: sprawdzamy NEXT)
+const premiumNow = premium || isPremium();
+
+if (!premiumNow) {
+  const current = getTodayCount();
+  const next = current + 1;
+
+  if (next > FREE_DAILY_LIMIT) {
     setIsPaywallOpen(true);
 
     const fb = minimalFeedbackClient(userText);
@@ -568,7 +572,12 @@ if (!premium) {
     ]);
     return;
   }
+
+  // rezerwujemy zużycie od razu (nie będzie 11/10)
+  const saved = incTodayCount();
+  setTodayCount(saved);
 }
+
 
 
     setInput("");
@@ -576,10 +585,7 @@ if (!premium) {
 
     const userMsg = makeUserMsg(userText);
     setMsgs((prev) => [...prev, userMsg]);
-if (!premium) {
-  const next = incTodayCount();
-  setTodayCount(next);
-}
+
 
     try {
       const snapshot = [...msgsRef.current, userMsg];
