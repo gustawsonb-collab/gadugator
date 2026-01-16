@@ -31,7 +31,7 @@ const SESSION_PREFS_KEY = "gaduGator.sessionPrefs";
 const THEME_KEY = "gadugator.theme.v1";
 const ONBOARDED_KEY = "gadugator.onboarded.v1";
 
-const FREE_DAILY_LIMIT = 15;
+const FREE_DAILY_LIMIT = 10;
 const USAGE_KEY = "gadugator.usage.v1";
 const PREMIUM_KEY = "gadugator.premium.v1";
 
@@ -728,6 +728,55 @@ if (!premium) {
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {sessionLabel ? <span style={{ fontSize: 13, opacity: 0.7 }}>{sessionLabel}</span> : null}
+            {!premium ? (
+  <span
+    style={{
+      fontSize: 13,
+      opacity: 0.85,
+      padding: "4px 8px",
+      borderRadius: 999,
+      border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+      background: dark ? "#12121a" : "#fff",
+    }}
+    title="Daily free usage"
+  >
+    Free: <b>{Math.min(todayCount, FREE_DAILY_LIMIT)}</b>/{FREE_DAILY_LIMIT} today
+  </span>
+) : (
+  <span
+    style={{
+      fontSize: 13,
+      opacity: 0.85,
+      padding: "4px 8px",
+      borderRadius: 999,
+      border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+      background: dark ? "#12121a" : "#fff",
+    }}
+    title="Premium active"
+  >
+    ⭐ Premium
+  </span>
+)}
+{!premium ? (
+  <button
+    type="button"
+    onClick={() => setIsPaywallOpen(true)}
+    style={{
+      padding: "6px 10px",
+      borderRadius: 10,
+      border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+      background: dark ? "#1a1a28" : "#111",
+      color: "#fff",
+      fontWeight: 800,
+      cursor: "pointer",
+    }}
+    title="Upgrade"
+    aria-label="Upgrade"
+  >
+    Upgrade
+  </button>
+) : null}
+
 
             {/* ⚙️ ustawienia sesji */}
             <button
