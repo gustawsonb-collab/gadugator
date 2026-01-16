@@ -1135,7 +1135,7 @@ if (!premiumNow) {
     bottom: 0,
     marginTop: 12,
     paddingTop: 10,
-    paddingBottom: "calc(10px + env(safe-area-inset-bottom))",
+    paddingBottom: "calc(16px + env(safe-area-inset-bottom))",
     background: dark ? "#0b0b0f" : "#f6f6f6",
     display: "flex",
     gap: 8,
@@ -1162,29 +1162,50 @@ if (!premiumNow) {
           />
 
           <button
-            type="button"
-            onMouseDown={startRecording}
-            onMouseUp={stopRecording}
-            onMouseLeave={stopRecording}
-            onTouchStart={startRecording}
-            onTouchEnd={stopRecording}
-            disabled={loading || isTranscribing}
-            title={isRecording ? "Nagrywam..." : "Przytrzymaj, aby mówić"}
-            aria-label={isRecording ? "Nagrywanie" : "Naciśnij i przytrzymaj, aby nagrywać"}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: isRecording ? "#ffecec" : "#fff",
-              cursor: loading || isTranscribing ? "not-allowed" : "pointer",
-              userSelect: "none",
-              WebkitUserSelect: "none",
-              boxShadow: isRecording ? "0 0 0 6px rgba(255, 0, 0, 0.12)" : "none",
-              transition: "box-shadow 0.2s ease",
-            }}
-          >
-            {isRecording ? "⏺️" : "🎙️"}
-          </button>
+  type="button"
+  onPointerDown={(e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      (e.currentTarget as any).setPointerCapture?.(e.pointerId);
+    } catch {}
+    void startRecording();
+  }}
+  onPointerUp={(e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    stopRecording();
+  }}
+  onPointerCancel={(e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    stopRecording();
+  }}
+  disabled={loading || isTranscribing}
+  title={isRecording ? "Nagrywam..." : "Przytrzymaj, aby mówić"}
+  aria-label={isRecording ? "Nagrywanie" : "Naciśnij i przytrzymaj, aby nagrywać"}
+  style={{
+    width: 56,
+    height: 56,
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 14,
+    border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+    background: isRecording ? "#ffecec" : dark ? "#12121a" : "#fff",
+    color: dark ? "#eee" : "#111",
+    cursor: loading || isTranscribing ? "not-allowed" : "pointer",
+    userSelect: "none",
+    WebkitUserSelect: "none",
+    touchAction: "none",
+    boxShadow: isRecording ? "0 0 0 8px rgba(255, 0, 0, 0.12)" : "none",
+    transition: "box-shadow 0.2s ease, transform 0.05s ease",
+  }}
+>
+  <span style={{ fontSize: 22, lineHeight: 1 }}>{isRecording ? "⏺️" : "🎙️"}</span>
+</button>
+
 
           <button onClick={send} disabled={loading || isRecording || isTranscribing} type="button">
             {loading ? "..." : "Wyślij"}
