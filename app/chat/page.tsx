@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import SessionSetupModal from "../api/chat/components/SessionSetupModal";
+import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/nextjs";
 
 type Role = "user" | "assistant";
 
@@ -897,6 +898,28 @@ if (!premiumNow) {
             </button>
           </div>
         </div>
+<SignedOut>
+  <SignInButton mode="modal">
+    <button
+      type="button"
+      style={{
+        padding: "6px 10px",
+        borderRadius: 10,
+        border: dark ? "1px solid #2a2a38" : "1px solid #ddd",
+        background: dark ? "#12121a" : "#fff",
+        color: "inherit",
+        cursor: "pointer",
+        fontWeight: 700,
+      }}
+    >
+      Log in
+    </button>
+  </SignInButton>
+</SignedOut>
+
+<SignedIn>
+  <UserButton />
+</SignedIn>
 
         {ttsError ? (
           <div style={{ marginBottom: 10, fontSize: 13, opacity: 0.9 }}>⚠️ Voice error: {ttsError}</div>
